@@ -62,7 +62,7 @@ func regexpStringHelper(s Regexp, buf *bytes.Buffer) {
 
 func TestParse(t *testing.T) {
 	for _, ex := range parseExamples {
-		p := Parse(ex.r)
+		p, _ := Parse(ex.r)
 		if p.String() != ex.p {
 			t.Errorf("Got %v, want %v", p, ex.p)
 		}
@@ -111,7 +111,11 @@ func TestEpsilonClosure(t *testing.T) {
 
 func TestTrigrams1(t *testing.T) {
 	s := "[a-c]b[v-z]"
-	nfa := BuildNFA(Parse(s))
+	r, err := Parse(s)
+	if err != nil {
+		t.Fatalf("Error parsing regex: %s", err)
+	}
+	nfa := BuildNFA(r)
 	CalculateEpsilonClosure(nfa)
 	trigrams := Trigrams(nfa.Start, nfa.Accept)
 	want := "[abv abw abx aby abz bbv bbw bbx bby bbz cbv cbw cbx cby cbz]"
@@ -122,7 +126,11 @@ func TestTrigrams1(t *testing.T) {
 
 func TestTrigrams2(t *testing.T) {
 	s := "(abc)|(xyz)|(afc)|(a[b-f]c)"
-	nfa := BuildNFA(Parse(s))
+	r, err := Parse(s)
+	if err != nil {
+		t.Fatalf("Error parsing regex: %s", err)
+	}
+	nfa := BuildNFA(r)
 	CalculateEpsilonClosure(nfa)
 	trigrams := Trigrams(nfa.Start, nfa.Accept)
 	want := "[abc acc adc aec afc xyz]"
@@ -133,7 +141,11 @@ func TestTrigrams2(t *testing.T) {
 
 func TestTrigrams3(t *testing.T) {
 	s := "(a|b){3,5}"
-	nfa := BuildNFA(Parse(s))
+	r, err := Parse(s)
+	if err != nil {
+		t.Fatalf("Error parsing regex: %s", err)
+	}
+	nfa := BuildNFA(r)
 	CalculateEpsilonClosure(nfa)
 	trigrams := Trigrams(nfa.Start, nfa.Accept)
 	want := "[aaa aab aba abb baa bab bba bbb]"
@@ -144,7 +156,11 @@ func TestTrigrams3(t *testing.T) {
 
 func TestTrigrams4(t *testing.T) {
 	s := "abc?"
-	nfa := BuildNFA(Parse(s))
+	r, err := Parse(s)
+	if err != nil {
+		t.Fatalf("Error parsing regex: %s", err)
+	}
+	nfa := BuildNFA(r)
 	CalculateEpsilonClosure(nfa)
 	trigrams := Trigrams(nfa.Start, nfa.Accept)
 	want := "[]"
@@ -246,11 +262,22 @@ var queryExamples = []struct {
 	{`abc+de`, `(abc) (bcc|bcd) (ccc|ccd|cde)`},
 	{`ab*cd`, `(abb|abc|acd)`},
 	{`a+b+c+`, `(aaa|aab|abb|abc)`},
+
+	// Our "trigrams" are three runes.
+	{`プログラミング`, `(プログ) (ログラ) (グラミ) (ラミン) (ミング)`},
+	{`(?i)Füße`, `(FÜß|FÜẞ|Füß|Füẞ|fÜß|fÜẞ|füß|füẞ) (ÜßE|Üße|ÜẞE|Üẞe|üßE|üße|üẞE|üẞe)`},
 }
 
 func TestQueries(t *testing.T) {
 	for _, ex := range queryExamples {
-		query := MakeQuery(BuildNFA(Parse(ex.r)))
+		r, err := Parse(ex.r)
+		if err != nil {
+			t.Fatalf("Error parsing regex: %s", err)
+		}
+		query, err := MakeQuery(BuildNFA(r))
+		if err != nil {
+			t.Fatalf("Error creating query: %v", err)
+		}
 		if query.String() != ex.q {
 			t.Errorf("For query %v: got %v, want %v", ex.r, query, ex.q)
 		}
@@ -277,7 +304,8 @@ var benchmarkRegexps = []string{
 func BenchmarkQueryTestSuite(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, r := range benchmarkRegexps {
-			MakeQuery(BuildNFA(Parse(r)))
+			re, _ := Parse(r)
+			MakeQuery(BuildNFA(re))
 		}
 	}
 }
@@ -285,7 +313,8 @@ func BenchmarkQueryTestSuite(b *testing.B) {
 func BenchmarkQueryBigNFA(b *testing.B) {
 	r := "(a?){20}a{20}"
 	for i := 0; i < b.N; i++ {
-		MakeQuery(BuildNFA(Parse(r)))
+		re, _ := Parse(r)
+		MakeQuery(BuildNFA(re))
 	}
 }
 
@@ -312,7 +341,8 @@ func BenchmarkParse(b *testing.B) {
 func BenchmarkBuildNFA(b *testing.B) {
 	parsed := []*Regexp{}
 	for _, r := range benchmarkRegexps {
-		parsed = append(parsed, Parse(r))
+		re, _ := Parse(r)
+		parsed = append(parsed, re)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

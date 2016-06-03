@@ -2,6 +2,7 @@ package regrams
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"regexp/syntax"
 	"sort"
@@ -44,13 +45,13 @@ type Regexp struct {
 	LitEnd   rune
 }
 
-func Parse(expr string) *Regexp {
+func Parse(expr string) (*Regexp, error) {
 	re, err := syntax.Parse(expr, syntax.Perl)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	sre := re.Simplify()
-	return NormalizeRegexp(sre)
+	return NormalizeRegexp(sre), nil
 }
 
 type NFA struct {
@@ -60,7 +61,7 @@ type NFA struct {
 
 var Epoch = 0
 
-func getEpoch() int {
+func newEpoch() int {
 	Epoch++
 	return Epoch
 }
@@ -90,7 +91,7 @@ type NFANode struct {
 }
 
 func CalculateEpsilonClosure(nfa *NFA) {
-	calculateEpsilonClosureHelper(nfa.Start, getEpoch())
+	calculateEpsilonClosureHelper(nfa.Start, newEpoch())
 }
 
 func calculateEpsilonClosureHelper(node *NFANode, epoch int) {
@@ -326,17 +327,17 @@ func (q Query) String() string {
 	return buffer.String()
 }
 
-func MakeQuery(nfa *NFA) Query {
+func MakeQuery(nfa *NFA) (Query, error) {
 	if countReachableNodes(nfa) > MaxNFANodes {
-		return Query{}
+		return Query{}, errors.New("Too many nodes in NFA, refusing to build query.")
 	}
 	CalculateEpsilonClosure(nfa)
 	PopulateTrigrams(nfa)
-	return makeQueryHelper(nfa)
+	return makeQueryHelper(nfa), nil
 }
 
 func countReachableNodes(nfa *NFA) int {
-	return countReachableNodesHelper(nfa.Start, getEpoch())
+	return countReachableNodesHelper(nfa.Start, newEpoch())
 }
 
 func countReachableNodesHelper(node *NFANode, epoch int) int {
@@ -404,7 +405,7 @@ func FindCut(nfa *NFA) (*NFA, *NFA, []string) {
 }
 
 func isolateCut(nfa *NFA) ([]*NFANode, int) {
-	epoch := getEpoch()
+	epoch := newEpoch()
 	return isolateCutHelper(nfa.Start, epoch), epoch
 }
 
@@ -427,7 +428,7 @@ func isolateCutHelper(node *NFANode, epoch int) []*NFANode {
 
 // Find path from nfa.Start to nfa.Accept through vertices of positive capacity.
 func FindAugmentingPath(nfa *NFA) []*NFANode {
-	return findAugmentingPathHelper(nfa.Start, nfa.Accept, getEpoch())
+	return findAugmentingPathHelper(nfa.Start, nfa.Accept, newEpoch())
 }
 
 func findAugmentingPathHelper(node *NFANode, accept *NFANode, epoch int) []*NFANode {
@@ -454,7 +455,7 @@ func findAugmentingPathHelper(node *NFANode, accept *NFANode, epoch int) []*NFAN
 
 // Build the trigram set for all nodes in the NFA.
 func PopulateTrigrams(nfa *NFA) {
-	populateTrigramsHelper(nfa.Start, nfa.Accept, getEpoch())
+	populateTrigramsHelper(nfa.Start, nfa.Accept, newEpoch())
 }
 
 func populateTrigramsHelper(node *NFANode, accept *NFANode, epoch int) {
@@ -472,7 +473,7 @@ func populateTrigramsHelper(node *NFANode, accept *NFANode, epoch int) {
 
 // Calculate capacities for all nodes in the NFA.
 func PopulateCapacities(nfa *NFA) {
-	populateCapacitiesHelper(nfa.Start, getEpoch())
+	populateCapacitiesHelper(nfa.Start, newEpoch())
 }
 
 func populateCapacitiesHelper(node *NFANode, epoch int) {

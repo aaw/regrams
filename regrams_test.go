@@ -22,13 +22,13 @@ var parseExamples = []struct {
 	{`abc?`, `ab(c|ε)`},
 }
 
-func (s Regexp) String() string {
+func (s regexp) String() string {
 	var buffer bytes.Buffer
 	regexpStringHelper(s, &buffer)
 	return buffer.String()
 }
 
-func regexpStringHelper(s Regexp, buf *bytes.Buffer) {
+func regexpStringHelper(s regexp, buf *bytes.Buffer) {
 	switch s.Op {
 	case KleeneStar:
 		buf.WriteString("(")
@@ -62,14 +62,14 @@ func regexpStringHelper(s Regexp, buf *bytes.Buffer) {
 
 func TestParse(t *testing.T) {
 	for _, ex := range parseExamples {
-		p, _ := Parse(ex.r)
+		p, _ := parseRegexpString(ex.r)
 		if p.String() != ex.p {
 			t.Errorf("Got %v, want %v", p, ex.p)
 		}
 	}
 }
 
-func assertNodeSetEqual(t *testing.T, want []*NFANode, got []*NFANode) {
+func assertNodeSetEqual(t *testing.T, want []*nFANode, got []*nFANode) {
 	if len(want) != len(got) {
 		t.Fatalf("Wanted length %v, got length %v", len(want), len(got))
 	}
@@ -91,33 +91,33 @@ func assertNodeSetEqual(t *testing.T, want []*NFANode, got []*NFANode) {
 }
 
 func TestEpsilonClosure(t *testing.T) {
-	n1 := &NFANode{}
-	n2 := &NFANode{}
-	n3 := &NFANode{}
-	n4 := &NFANode{Epsilons: []*NFANode{n1, n2}}
-	n5 := &NFANode{Epsilons: []*NFANode{n3}}
-	n6 := &NFANode{Epsilons: []*NFANode{n4, n1}}
-	n7 := &NFANode{Epsilons: []*NFANode{n4, n5}}
-	n8 := &NFANode{Epsilons: []*NFANode{n1, n3, n7}}
-	n9 := &NFANode{Epsilons: []*NFANode{n8, n6}}
-	n10 := &NFANode{Epsilons: []*NFANode{n9}}
+	n1 := &nFANode{}
+	n2 := &nFANode{}
+	n3 := &nFANode{}
+	n4 := &nFANode{Epsilons: []*nFANode{n1, n2}}
+	n5 := &nFANode{Epsilons: []*nFANode{n3}}
+	n6 := &nFANode{Epsilons: []*nFANode{n4, n1}}
+	n7 := &nFANode{Epsilons: []*nFANode{n4, n5}}
+	n8 := &nFANode{Epsilons: []*nFANode{n1, n3, n7}}
+	n9 := &nFANode{Epsilons: []*nFANode{n8, n6}}
+	n10 := &nFANode{Epsilons: []*nFANode{n9}}
 	n10.Epsilons = append(n10.Epsilons, n10)
 	n1.Epsilons = append(n1.Epsilons, n8)
-	CalculateEpsilonClosure(&NFA{Start: n10, Accept: n1})
-	assertNodeSetEqual(t, []*NFANode{n2}, n2.EpsilonClosure)
-	assertNodeSetEqual(t, []*NFANode{n1, n2, n3, n4, n5, n6, n7, n8, n9}, n9.EpsilonClosure)
-	assertNodeSetEqual(t, []*NFANode{n1, n2, n3, n4, n5, n6, n7, n8, n9, n10}, n10.EpsilonClosure)
+	populateEpsilonClosure(&nFA{Start: n10, Accept: n1})
+	assertNodeSetEqual(t, []*nFANode{n2}, n2.EpsilonClosure)
+	assertNodeSetEqual(t, []*nFANode{n1, n2, n3, n4, n5, n6, n7, n8, n9}, n9.EpsilonClosure)
+	assertNodeSetEqual(t, []*nFANode{n1, n2, n3, n4, n5, n6, n7, n8, n9, n10}, n10.EpsilonClosure)
 }
 
 func TestTrigrams1(t *testing.T) {
 	s := "[a-c]b[v-z]"
-	r, err := Parse(s)
+	r, err := parseRegexpString(s)
 	if err != nil {
 		t.Fatalf("Error parsing regex: %s", err)
 	}
-	nfa := BuildNFA(r)
-	CalculateEpsilonClosure(nfa)
-	trigrams := Trigrams(nfa.Start, nfa.Accept)
+	nfa := buildNFA(r)
+	populateEpsilonClosure(nfa)
+	trigrams := trigrams(nfa.Start, nfa.Accept)
 	want := "[abv abw abx aby abz bbv bbw bbx bby bbz cbv cbw cbx cby cbz]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -126,13 +126,13 @@ func TestTrigrams1(t *testing.T) {
 
 func TestTrigrams2(t *testing.T) {
 	s := "(abc)|(xyz)|(afc)|(a[b-f]c)"
-	r, err := Parse(s)
+	r, err := parseRegexpString(s)
 	if err != nil {
 		t.Fatalf("Error parsing regex: %s", err)
 	}
-	nfa := BuildNFA(r)
-	CalculateEpsilonClosure(nfa)
-	trigrams := Trigrams(nfa.Start, nfa.Accept)
+	nfa := buildNFA(r)
+	populateEpsilonClosure(nfa)
+	trigrams := trigrams(nfa.Start, nfa.Accept)
 	want := "[abc acc adc aec afc xyz]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -141,13 +141,13 @@ func TestTrigrams2(t *testing.T) {
 
 func TestTrigrams3(t *testing.T) {
 	s := "(a|b){3,5}"
-	r, err := Parse(s)
+	r, err := parseRegexpString(s)
 	if err != nil {
 		t.Fatalf("Error parsing regex: %s", err)
 	}
-	nfa := BuildNFA(r)
-	CalculateEpsilonClosure(nfa)
-	trigrams := Trigrams(nfa.Start, nfa.Accept)
+	nfa := buildNFA(r)
+	populateEpsilonClosure(nfa)
+	trigrams := trigrams(nfa.Start, nfa.Accept)
 	want := "[aaa aab aba abb baa bab bba bbb]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -156,13 +156,13 @@ func TestTrigrams3(t *testing.T) {
 
 func TestTrigrams4(t *testing.T) {
 	s := "abc?"
-	r, err := Parse(s)
+	r, err := parseRegexpString(s)
 	if err != nil {
 		t.Fatalf("Error parsing regex: %s", err)
 	}
-	nfa := BuildNFA(r)
-	CalculateEpsilonClosure(nfa)
-	trigrams := Trigrams(nfa.Start, nfa.Accept)
+	nfa := buildNFA(r)
+	populateEpsilonClosure(nfa)
+	trigrams := trigrams(nfa.Start, nfa.Accept)
 	want := "[]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -260,6 +260,8 @@ var queryExamples = []struct {
 	{`(bc)+d`, `(bcb|bcd)`},
 	{`a(bc)+d`, `(abc) (bcb|bcd)`},
 	{`abc+de`, `(abc) (bcc|bcd) (ccc|ccd|cde)`},
+	{`(abc*)+de`, `(aba|abc|abd) (bab|bca|bcc|bcd|bde)`},
+	{`ab(cd)*ef`, `(abc|abe) (bcd|bef)`},
 	{`ab*cd`, `(abb|abc|acd)`},
 	{`a+b+c+`, `(aaa|aab|abb|abc)`},
 
@@ -270,11 +272,7 @@ var queryExamples = []struct {
 
 func TestQueries(t *testing.T) {
 	for _, ex := range queryExamples {
-		r, err := Parse(ex.r)
-		if err != nil {
-			t.Fatalf("Error parsing regex: %s", err)
-		}
-		query, err := MakeQuery(BuildNFA(r))
+		query, err := MakeQuery(ex.r)
 		if err != nil {
 			t.Fatalf("Error creating query: %v", err)
 		}
@@ -304,8 +302,7 @@ var benchmarkRegexps = []string{
 func BenchmarkQueryTestSuite(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, r := range benchmarkRegexps {
-			re, _ := Parse(r)
-			MakeQuery(BuildNFA(re))
+			MakeQuery(r)
 		}
 	}
 }
@@ -313,8 +310,7 @@ func BenchmarkQueryTestSuite(b *testing.B) {
 func BenchmarkQueryBigNFA(b *testing.B) {
 	r := "(a?){20}a{20}"
 	for i := 0; i < b.N; i++ {
-		re, _ := Parse(r)
-		MakeQuery(BuildNFA(re))
+		MakeQuery(r)
 	}
 }
 
@@ -330,24 +326,24 @@ func BenchmarkGoParseAndSimplify(b *testing.B) {
 	}
 }
 
-func BenchmarkParse(b *testing.B) {
+func BenchmarkParseRegexpString(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, r := range benchmarkRegexps {
-			Parse(r)
+			parseRegexpString(r)
 		}
 	}
 }
 
 func BenchmarkBuildNFA(b *testing.B) {
-	parsed := []*Regexp{}
+	parsed := []*regexp{}
 	for _, r := range benchmarkRegexps {
-		re, _ := Parse(r)
+		re, _ := parseRegexpString(r)
 		parsed = append(parsed, re)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, p := range parsed {
-			BuildNFA(p)
+			buildNFA(p)
 		}
 	}
 }

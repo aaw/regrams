@@ -1,3 +1,11 @@
+// regrams parses regular expressions into trigram queries in conjunctive
+// normal form. To build a search engine that accepts regular expression
+// queries, index all text documents by trigrams, then use the MakeQuery method
+// provided in this package to transform any regular expression query into a
+// query over the indexed trigrams.
+//
+// For example, MakeQuery("abc+(d|e)") returns [["abc"], ["bcc","bcd","bce"]],
+// which represents the trigram query "(abc) AND (bcc OR bcd OR bce)"
 package regrams
 
 import (
@@ -14,17 +22,17 @@ import (
 
 // If we see a single character class with at least this many characters, we'll
 // give up on trying to expand ngrams for character class.
-const MaxCharClassSize = 10
+const maxCharClassSize = 10
 
 // We'll never analyze a set of ngrams larger than this.
-const MaxNgramSetSize = 100
+const maxNgramSetSize = 100
 
 // We won't try to create a query from any NFAs with at least this many nodes.
-const MaxNFANodes = 1000
+const maxNFANodes = 10000
 
 // A very large weight. Used during computation of a minimum-weight cut on the
 // NFA for any node that we don't want to be part of a cut.
-const Infinity = MaxNgramSetSize * MaxNFANodes
+const infinity = maxNgramSetSize * maxNFANodes
 
 // Analyzing a single query involves multiple traversals over the NFA. Each
 // traversal needs to keep track of which nodes have and haven't been seen at
@@ -34,27 +42,27 @@ const Infinity = MaxNgramSetSize * MaxNFANodes
 // counter. When we visit an nFANode, we'll set WhenSeen to the current epoch,
 // so testing whether a node has been visited for a traversal is just a check to
 // see if WhenSeen is equal to the current epoch.
-var Epoch = 0
+var epoch = 0
 
 func newEpoch() int {
-	Epoch++
-	return Epoch
+	epoch++
+	return epoch
 }
 
 type regexpOp int
 
 const (
-	KleeneStar regexpOp = iota
-	Concatenate
-	Alternate
-	Literal
-	EmptyString
-	NoMatch
+	kleeneStar regexpOp = iota
+	concatenate
+	alternate
+	literal
+	emptyString
+	noMatch
 )
 
-// A textbook regular expression. If Op is Literal, this represents the
-// character class [LitBegin-LitEnd]. If Op is KleeneStar, Concatenate, or
-// Alternate, Sub is populated with subexpressions.
+// A textbook regular expression. If Op is literal, this represents the
+// character class [LitBegin-LitEnd]. If Op is kleeneStar, concatenate, or
+// alternate, Sub is populated with subexpressions.
 type regexp struct {
 	Op       regexpOp
 	Sub      []*regexp
@@ -77,7 +85,7 @@ func parseRegexpString(expr string) (*regexp, error) {
 func normalizeRegexp(re *syntax.Regexp) *regexp {
 	switch re.Op {
 	case syntax.OpNoMatch:
-		return &regexp{Op: NoMatch}
+		return &regexp{Op: noMatch}
 	case syntax.OpEmptyMatch,
 		syntax.OpBeginLine,
 		syntax.OpEndLine,
@@ -85,27 +93,27 @@ func normalizeRegexp(re *syntax.Regexp) *regexp {
 		syntax.OpEndText,
 		syntax.OpWordBoundary,
 		syntax.OpNoWordBoundary:
-		return &regexp{Op: EmptyString}
+		return &regexp{Op: emptyString}
 	case syntax.OpLiteral:
 		lits := make([]*regexp, len(re.Rune))
 		for i, r := range re.Rune {
 			if re.Flags&syntax.FoldCase != 0 {
-				folds := []*regexp{&regexp{Op: Literal, LitBegin: r, LitEnd: r}}
+				folds := []*regexp{&regexp{Op: literal, LitBegin: r, LitEnd: r}}
 				for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
-					folds = append(folds, &regexp{Op: Literal, LitBegin: f, LitEnd: f})
+					folds = append(folds, &regexp{Op: literal, LitBegin: f, LitEnd: f})
 				}
-				lits[i] = &regexp{Op: Alternate, Sub: folds}
+				lits[i] = &regexp{Op: alternate, Sub: folds}
 			} else {
-				lits[i] = &regexp{Op: Literal, LitBegin: r, LitEnd: r}
+				lits[i] = &regexp{Op: literal, LitBegin: r, LitEnd: r}
 			}
 		}
-		return &regexp{Op: Concatenate, Sub: lits}
+		return &regexp{Op: concatenate, Sub: lits}
 	case syntax.OpAnyCharNotNL:
-		beforeNL := &regexp{Op: Literal, LitBegin: 0, LitEnd: '\n'}
-		afterNL := &regexp{Op: Literal, LitBegin: '\n', LitEnd: utf8.MaxRune}
-		return &regexp{Op: Alternate, Sub: []*regexp{beforeNL, afterNL}}
+		beforeNL := &regexp{Op: literal, LitBegin: 0, LitEnd: '\n'}
+		afterNL := &regexp{Op: literal, LitBegin: '\n', LitEnd: utf8.MaxRune}
+		return &regexp{Op: alternate, Sub: []*regexp{beforeNL, afterNL}}
 	case syntax.OpAnyChar:
-		return &regexp{Op: Literal, LitBegin: 0, LitEnd: utf8.MaxRune}
+		return &regexp{Op: literal, LitBegin: 0, LitEnd: utf8.MaxRune}
 	case syntax.OpCapture:
 		return normalizeRegexp(re.Sub[0])
 	case syntax.OpConcat:
@@ -113,17 +121,17 @@ func normalizeRegexp(re *syntax.Regexp) *regexp {
 		for i, s := range re.Sub {
 			args[i] = normalizeRegexp(s)
 		}
-		return &regexp{Op: Concatenate, Sub: args}
+		return &regexp{Op: concatenate, Sub: args}
 	case syntax.OpAlternate:
 		args := make([]*regexp, len(re.Sub))
 		for i, s := range re.Sub {
 			args[i] = normalizeRegexp(s)
 		}
-		return &regexp{Op: Alternate, Sub: args}
+		return &regexp{Op: alternate, Sub: args}
 	case syntax.OpQuest:
-		return &regexp{Op: Alternate, Sub: []*regexp{normalizeRegexp(re.Sub[0]), &regexp{Op: EmptyString}}}
+		return &regexp{Op: alternate, Sub: []*regexp{normalizeRegexp(re.Sub[0]), &regexp{Op: emptyString}}}
 	case syntax.OpStar:
-		return &regexp{Op: KleeneStar, Sub: []*regexp{normalizeRegexp(re.Sub[0])}}
+		return &regexp{Op: kleeneStar, Sub: []*regexp{normalizeRegexp(re.Sub[0])}}
 	case syntax.OpRepeat:
 		args := make([]*regexp, re.Max)
 		sub := normalizeRegexp(re.Sub[0])
@@ -131,23 +139,22 @@ func normalizeRegexp(re *syntax.Regexp) *regexp {
 			args[i] = sub
 		}
 		for i := re.Min; i < re.Max; i++ {
-			args[i] = &regexp{Op: Alternate, Sub: []*regexp{sub, &regexp{Op: EmptyString}}}
+			args[i] = &regexp{Op: alternate, Sub: []*regexp{sub, &regexp{Op: emptyString}}}
 		}
-		return &regexp{Op: Concatenate, Sub: args}
+		return &regexp{Op: concatenate, Sub: args}
 	case syntax.OpPlus:
 		parsed := normalizeRegexp(re.Sub[0])
-		return &regexp{Op: Concatenate, Sub: []*regexp{parsed, &regexp{Op: KleeneStar, Sub: []*regexp{parsed}}}}
+		return &regexp{Op: concatenate, Sub: []*regexp{parsed, &regexp{Op: kleeneStar, Sub: []*regexp{parsed}}}}
 	case syntax.OpCharClass:
 		args := make([]*regexp, len(re.Rune)/2)
 		for i := 0; i < len(re.Rune)-1; i += 2 {
-			args[i/2] = &regexp{Op: Literal, LitBegin: re.Rune[i], LitEnd: re.Rune[i+1]}
+			args[i/2] = &regexp{Op: literal, LitBegin: re.Rune[i], LitEnd: re.Rune[i+1]}
 		}
-		return &regexp{Op: Alternate, Sub: args}
+		return &regexp{Op: alternate, Sub: args}
 	}
 	panic(fmt.Sprintf("Unknown regexp operation: %v (%v)", re.Op, re))
 }
 
-// Our NFAs always have exactly one accept state.
 type nFA struct {
 	Start  *nFANode
 	Accept *nFANode
@@ -184,13 +191,13 @@ type nFANode struct {
 // Thompson's construction of an NFA from a regular expression.
 func buildNFA(re *regexp) *nFA {
 	switch re.Op {
-	case KleeneStar:
+	case kleeneStar:
 		sub := buildNFA(re.Sub[0])
 		accept := &nFANode{}
 		start := &nFANode{Epsilons: []*nFANode{sub.Start, accept}}
 		sub.Accept.Epsilons = append(sub.Accept.Epsilons, sub.Start, accept)
 		return &nFA{Start: start, Accept: accept}
-	case Concatenate:
+	case concatenate:
 		var next, curr *nFA
 		var accept *nFANode
 		for i := len(re.Sub) - 1; i >= 0; i-- {
@@ -203,7 +210,7 @@ func buildNFA(re *regexp) *nFA {
 			next = curr
 		}
 		return &nFA{Start: curr.Start, Accept: accept}
-	case Alternate:
+	case alternate:
 		subStarts := make([]*nFANode, len(re.Sub))
 		accept := &nFANode{}
 		for i, sub := range re.Sub {
@@ -213,15 +220,15 @@ func buildNFA(re *regexp) *nFA {
 		}
 		start := &nFANode{Epsilons: subStarts}
 		return &nFA{Start: start, Accept: accept}
-	case Literal:
+	case literal:
 		accept := &nFANode{}
 		start := &nFANode{LitBegin: re.LitBegin, LitEnd: re.LitEnd, LitOut: accept}
 		return &nFA{Start: start, Accept: accept}
-	case EmptyString:
+	case emptyString:
 		accept := &nFANode{}
 		start := &nFANode{Epsilons: []*nFANode{accept}}
 		return &nFA{Start: start, Accept: accept}
-	case NoMatch:
+	case noMatch:
 		return &nFA{Start: &nFANode{}}
 	}
 	panic(fmt.Sprintf("Unknown regexp Op: %s (%v)", re.Op, re))
@@ -229,7 +236,7 @@ func buildNFA(re *regexp) *nFA {
 
 // A trigram query. These are always in conjunctive normal form: an AND of a
 // bunch of ORs. The Query [["abc", "xbc"], ["xxx"]], for example, represents
-// the trigram query (abc OR abc) AND (xxx).
+// the trigram query (abc OR xbc) AND (xxx).
 type Query [][]string
 
 func (q Query) String() string {
@@ -252,12 +259,32 @@ func MakeQuery(r string) (Query, error) {
 		return Query{}, err
 	}
 	nfa := buildNFA(re)
-	if countReachableNodes(nfa) > MaxNFANodes {
+	if countReachableNodes(nfa) > maxNFANodes {
 		return Query{}, errors.New("Too many nodes in NFA, refusing to build query.")
 	}
 	populateEpsilonClosure(nfa)
 	populateTrigrams(nfa)
 	return makeQueryHelper(nfa), nil
+}
+
+// Count the number of nodes in an NFA. We only do this to make sure that we
+// don't start computing a min cut on a graph that's too big.
+func countReachableNodes(nfa *nFA) int {
+	return countReachableNodesHelper(nfa.Start, newEpoch())
+}
+
+func countReachableNodesHelper(node *nFANode, epoch int) int {
+	if seen(node, epoch) {
+		return 0
+	}
+	count := 1
+	if node.LitOut != nil {
+		count += countReachableNodesHelper(node.LitOut, epoch)
+	}
+	for _, e := range node.Epsilons {
+		count += countReachableNodesHelper(e, epoch)
+	}
+	return count
 }
 
 // Compute the epsilon closure of each node in the NFA, populate the
@@ -302,6 +329,32 @@ func uniqNodes(nodes []*nFANode) []*nFANode {
 	return nodes[:i]
 }
 
+// Build the trigram set for all nodes in the NFA. Nodes with trigram sets that
+// are deemed too large during expansion or that can't be computed because the
+// accept state is reachable in 2 or fewer steps are given an empty trigram
+// set. There's a faster way to compute the trigram sets than what we do here:
+// we're essentially running a separate sub-traversal to compute trigrams
+// at each node (the call to "trigrams" in populateTrigramsHelper), when we
+// could be computing the trigram set with three passes over the graph,
+// accumulating intermediate suffixes to build up the trigrams at each step.
+func populateTrigrams(nfa *nFA) {
+	populateTrigramsHelper(nfa.Start, nfa.Accept, newEpoch())
+}
+
+func populateTrigramsHelper(node *nFANode, accept *nFANode, epoch int) {
+	if seen(node, epoch) {
+		return
+	}
+	if node.LitOut != nil {
+		node.Trigrams = trigrams(node, accept)
+		populateTrigramsHelper(node.LitOut, accept, epoch)
+	}
+	for _, e := range node.Epsilons {
+		populateTrigramsHelper(e, accept, epoch)
+	}
+}
+
+// Compute the trigram set for an individual node.
 func trigrams(root *nFANode, accept *nFANode) []string {
 	return uniq(ngramSearch(root, accept, 3))
 }
@@ -322,7 +375,7 @@ func ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
 		}
 		begin := int(cnode.LitBegin)
 		end := int(cnode.LitEnd)
-		if end-begin > MaxCharClassSize {
+		if end-begin > maxCharClassSize {
 			// Bail out, the ngram set might be too large.
 			return []string{}
 		}
@@ -331,7 +384,7 @@ func ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
 			// A subresult has bailed out, so short-circuit here as well.
 			return []string{}
 		}
-		if len(subresults)*(end-begin+1) > MaxNgramSetSize {
+		if len(subresults)*(end-begin+1) > maxNgramSetSize {
 			// Bail out, the ngram set is going to be too large.
 			return []string{}
 		}
@@ -353,6 +406,22 @@ func crossProduct(x int, y []string) {
 	}
 }
 
+// Once the trigram set is populated on each node, all that's left is to
+// generate the query. We find a minimum weight vertex cut in the NFA based on
+// weights computed from the size of the trigram sets of each node, then
+// recursively continue on both sides of the cut to identify disjunctions that
+// we can AND together to make a complete query.
+func makeQueryHelper(nfa *nFA) Query {
+	s, t, cut := findCut(nfa)
+	if len(cut) > 0 {
+		sq := makeQueryHelper(s)
+		tq := makeQueryHelper(t)
+		return Query(append(append(sq, uniq(cut)), tq...))
+	} else {
+		return Query{}
+	}
+}
+
 func uniq(x []string) []string {
 	sort.Strings(x)
 	i := 0
@@ -365,39 +434,16 @@ func uniq(x []string) []string {
 	return x[:i]
 }
 
-func countReachableNodes(nfa *nFA) int {
-	return countReachableNodesHelper(nfa.Start, newEpoch())
-}
-
-func countReachableNodesHelper(node *nFANode, epoch int) int {
-	if seen(node, epoch) {
-		return 0
-	}
-	count := 1
-	if node.LitOut != nil {
-		count += countReachableNodesHelper(node.LitOut, epoch)
-	}
-	for _, e := range node.Epsilons {
-		count += countReachableNodesHelper(e, epoch)
-	}
-	return count
-}
-
-func makeQueryHelper(nfa *nFA) Query {
-	s, t, cut := findCut(nfa)
-	if len(cut) > 0 {
-		sq := makeQueryHelper(s)
-		tq := makeQueryHelper(t)
-		return Query(append(append(sq, uniq(cut)), tq...))
-	} else {
-		return Query{}
-	}
-}
-
+// Find a minimum-weight vertex cut in the NFA by repeatedly pushing flow
+// through a path of positive capacity until no such path exists. This is
+// essentially the (depth-first) Ford-Fulkerson algorithm. After no more flow
+// can be pushed through, identify the cut and do a little surgery on the NFA
+// so that it's actually two NFAs: one on each side of the cut. We'll pass those
+// two NFAs back along with the cut and continue extracting queries from each.
 func findCut(nfa *nFA) (*nFA, *nFA, []string) {
 	populateCapacities(nfa)
 	for path := []*nFANode{}; path != nil; path = findAugmentingPath(nfa) {
-		minCap := Infinity
+		minCap := infinity
 		for _, node := range path {
 			if node.Capacity < minCap {
 				minCap = node.Capacity
@@ -427,12 +473,18 @@ func findCut(nfa *nFA) (*nFA, *nFA, []string) {
 		}
 		if frontier && node.LitOut != nil {
 			orClause = append(orClause, node.Trigrams...)
-			node.Trigrams = []string{} // reset so that they aren't continually reused in a cut...
+			// This is a hack, we're clearing the trigram set on a
+			// node when it's used so that they aren't continually
+			// reused when the graph is decomposed and cut again.
+			node.Trigrams = []string{}
 		}
 	}
 	return &nFA{Start: nfa.Start, Accept: accept}, &nFA{Start: start, Accept: nfa.Accept}, orClause
 }
 
+// Once capacities have been decremented by pushing flow through a graph, we
+// can identify the cut by figuring out which nodes are reachable without
+// crossing any zero-capacity nodes.
 func isolateCut(nfa *nFA) ([]*nFANode, int) {
 	epoch := newEpoch()
 	return isolateCutHelper(nfa.Start, epoch), epoch
@@ -455,7 +507,8 @@ func isolateCutHelper(node *nFANode, epoch int) []*nFANode {
 	return result
 }
 
-// Find path from nfa.Start to nfa.Accept through vertices of positive capacity.
+// Find a path from nfa.Start to nfa.Accept through vertices of positive
+// capacity. The path is returned in reverse order from accept to start.
 func findAugmentingPath(nfa *nFA) []*nFANode {
 	return findAugmentingPathHelper(nfa.Start, nfa.Accept, newEpoch())
 }
@@ -482,46 +535,28 @@ func findAugmentingPathHelper(node *nFANode, accept *nFANode, epoch int) []*nFAN
 	return nil
 }
 
-// Build the trigram set for all nodes in the NFA.
-func populateTrigrams(nfa *nFA) {
-	populateTrigramsHelper(nfa.Start, nfa.Accept, newEpoch())
-}
-
-func populateTrigramsHelper(node *nFANode, accept *nFANode, epoch int) {
-	if seen(node, epoch) {
-		return
-	}
-	if node.LitOut != nil {
-		node.Trigrams = trigrams(node, accept)
-		populateTrigramsHelper(node.LitOut, accept, epoch)
-	}
-	for _, e := range node.Epsilons {
-		populateTrigramsHelper(e, accept, epoch)
-	}
-}
-
 // Calculate capacities for all nodes in the NFA.
 func populateCapacities(nfa *nFA) {
 	populateCapacitiesHelper(nfa.Start, newEpoch())
 }
 
+// * Any node with LitOut = nil has capacity infinity.
+// * Any node with LitOut != nil && empty trigram set has capacity infinity.
+// * Any node with LitOut != nil && non-empty trigram set has capacity == len(trigram set).
 func populateCapacitiesHelper(node *nFANode, epoch int) {
 	if seen(node, epoch) {
 		return
 	}
-	// - Any node with LitOut = nil has capacity infinity
-	// - Any node with LitOut != nil && empty trigram set has capacity infinity
-	// - Any node with LitOut != nil && non-empty trigram set has capacity == len(trigram set)
 	if node.LitOut != nil {
 		nt := len(node.Trigrams)
 		if nt > 0 {
 			node.Capacity = nt
 		} else {
-			node.Capacity = Infinity
+			node.Capacity = infinity
 		}
 		populateCapacitiesHelper(node.LitOut, epoch)
 	} else {
-		node.Capacity = Infinity
+		node.Capacity = infinity
 	}
 	for _, e := range node.Epsilons {
 		populateCapacitiesHelper(e, epoch)

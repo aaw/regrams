@@ -30,15 +30,15 @@ func (s regexp) String() string {
 
 func regexpStringHelper(s regexp, buf *bytes.Buffer) {
 	switch s.Op {
-	case KleeneStar:
+	case kleeneStar:
 		buf.WriteString("(")
 		regexpStringHelper(*s.Sub[0], buf)
 		buf.WriteString(")*")
-	case Concatenate:
+	case concatenate:
 		for _, x := range s.Sub {
 			regexpStringHelper(*x, buf)
 		}
-	case Alternate:
+	case alternate:
 		buf.WriteString("(")
 		for i, x := range s.Sub {
 			regexpStringHelper(*x, buf)
@@ -47,15 +47,15 @@ func regexpStringHelper(s regexp, buf *bytes.Buffer) {
 			}
 		}
 		buf.WriteString(")")
-	case Literal:
+	case literal:
 		if s.LitBegin == s.LitEnd {
 			buf.WriteString(fmt.Sprintf("%c", s.LitBegin))
 		} else {
 			buf.WriteString(fmt.Sprintf("[%c-%c]", s.LitBegin, s.LitEnd))
 		}
-	case EmptyString:
+	case emptyString:
 		buf.WriteString("ε")
-	case NoMatch:
+	case noMatch:
 		buf.WriteString("∅")
 	}
 }

@@ -26,6 +26,14 @@ const MaxNFANodes = 1000
 // NFA for any node that we don't want to be part of a cut.
 const Infinity = MaxNgramSetSize * MaxNFANodes
 
+// Analyzing a single query involves multiple traversals over the NFA. Each
+// traversal needs to keep track of which nodes have and haven't been seen at
+// any given point to avoid loops. Instead of allocating a map[*nFANode]bool
+// to keep track of this for each traversal, each nFANode has a WhenSeen field
+// and each time we want to traverse the NFA, we'll increment a global Epoch
+// counter. When we visit an nFANode, we'll set WhenSeen to the current epoch,
+// so testing whether a node has been visited for a traversal is just a check to
+// see if WhenSeen is equal to the current epoch.
 var Epoch = 0
 
 func newEpoch() int {
@@ -44,7 +52,9 @@ const (
 	NoMatch
 )
 
-// A regular expression that's closer to the
+// A textbook regular expression. If Op is Literal, this represents the
+// character class [LitBegin-LitEnd]. If Op is KleeneStar, Concatenate, or
+// Alternate, Sub is populated with subexpressions.
 type regexp struct {
 	Op       regexpOp
 	Sub      []*regexp
@@ -60,182 +70,6 @@ func parseRegexpString(expr string) (*regexp, error) {
 	}
 	sre := re.Simplify()
 	return normalizeRegexp(sre), nil
-}
-
-type nFA struct {
-	Start  *nFANode
-	Accept *nFANode
-}
-
-// Visits the node, returns true if the node has already been visited this
-// epoch and false otherwise.
-func seen(node *nFANode, epoch int) bool {
-	if node.WhenSeen == epoch {
-		return true
-	}
-	node.WhenSeen = epoch
-	return false
-}
-
-// An NFANode has zero or more epsilon-transitions but only at most one
-// character class transition ([LitBegin-LitEnd] -> LitOut). If the node
-// has no character class transition, LitOut is nil.
-type nFANode struct {
-	LitOut         *nFANode
-	LitBegin       rune
-	LitEnd         rune
-	Epsilons       []*nFANode
-	EpsilonClosure []*nFANode
-	Trigrams       []string
-	WhenSeen       int
-	Capacity       int
-}
-
-func populateEpsilonClosure(nfa *nFA) {
-	populateEpsilonClosureHelper(nfa.Start, newEpoch())
-}
-
-func populateEpsilonClosureHelper(node *nFANode, epoch int) {
-	if seen(node, epoch) {
-		return
-	}
-	closure := []*nFANode{node}
-	for _, e := range node.Epsilons {
-		populateEpsilonClosureHelper(e, epoch)
-		closure = append(closure, e.EpsilonClosure...)
-	}
-	node.EpsilonClosure = uniqNodes(closure)
-	if node.LitOut != nil {
-		populateEpsilonClosureHelper(node.LitOut, epoch)
-	}
-}
-
-type byNFANodePtr []*nFANode
-
-func (a byNFANodePtr) Len() int      { return len(a) }
-func (a byNFANodePtr) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a byNFANodePtr) Less(i, j int) bool {
-	return uintptr(unsafe.Pointer(a[i])) < uintptr(unsafe.Pointer(a[j]))
-}
-func uniqNodes(nodes []*nFANode) []*nFANode {
-	sort.Sort(byNFANodePtr(nodes))
-	i := 0
-	for _, s := range nodes {
-		if i == 0 || nodes[i-1] != s {
-			nodes[i] = s
-			i++
-		}
-	}
-	return nodes[:i]
-}
-
-func trigrams(root *nFANode, accept *nFANode) []string {
-	return uniq(ngramSearch(root, accept, 3))
-}
-
-func ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
-	if limit == 0 {
-		return []string{""}
-	}
-	results := []string{}
-	for _, cnode := range node.EpsilonClosure {
-		if cnode == accept {
-			// Bail out, we can reach the accept state before we've consumed
-			// enough characters for a full n-gram.
-			return []string{}
-		}
-		if cnode.LitOut == nil {
-			continue
-		}
-		begin := int(cnode.LitBegin)
-		end := int(cnode.LitEnd)
-		if end-begin > MaxCharClassSize {
-			// Bail out, the ngram set might be too large.
-			return []string{}
-		}
-		subresults := ngramSearch(cnode.LitOut, accept, limit-1)
-		if len(subresults) == 0 {
-			// A subresult has bailed out, so short-circuit here as well.
-			return []string{}
-		}
-		if len(subresults)*(end-begin+1) > MaxNgramSetSize {
-			// Bail out, the ngram set is going to be too large.
-			return []string{}
-		}
-		suffixes := make([]string, len(subresults))
-		for i := begin; i <= end; i++ {
-			copy(suffixes, subresults)
-			crossProduct(i, suffixes)
-			results = append(results, suffixes...)
-		}
-	}
-	return results
-}
-
-// Prefix each string in y with the string at codepoint x.
-func crossProduct(x int, y []string) {
-	s := string(rune(x))
-	for i, yy := range y {
-		y[i] = s + yy
-	}
-}
-
-func uniq(x []string) []string {
-	sort.Strings(x)
-	i := 0
-	for _, s := range x {
-		if i == 0 || x[i-1] != s {
-			x[i] = s
-			i++
-		}
-	}
-	return x[:i]
-}
-
-// Thompson's construction of an NFA from a regular expression.
-func buildNFA(re *regexp) *nFA {
-	switch re.Op {
-	case KleeneStar:
-		sub := buildNFA(re.Sub[0])
-		accept := &nFANode{}
-		start := &nFANode{Epsilons: []*nFANode{sub.Start, accept}}
-		sub.Accept.Epsilons = append(sub.Accept.Epsilons, sub.Start, accept)
-		return &nFA{Start: start, Accept: accept}
-	case Concatenate:
-		var next, curr *nFA
-		var accept *nFANode
-		for i := len(re.Sub) - 1; i >= 0; i-- {
-			curr = buildNFA(re.Sub[i])
-			if next != nil {
-				curr.Accept.Epsilons = append(curr.Accept.Epsilons, next.Start)
-			} else {
-				accept = curr.Accept
-			}
-			next = curr
-		}
-		return &nFA{Start: curr.Start, Accept: accept}
-	case Alternate:
-		subStarts := make([]*nFANode, len(re.Sub))
-		accept := &nFANode{}
-		for i, sub := range re.Sub {
-			nfa := buildNFA(sub)
-			nfa.Accept.Epsilons = append(nfa.Accept.Epsilons, accept)
-			subStarts[i] = nfa.Start
-		}
-		start := &nFANode{Epsilons: subStarts}
-		return &nFA{Start: start, Accept: accept}
-	case Literal:
-		accept := &nFANode{}
-		start := &nFANode{LitBegin: re.LitBegin, LitEnd: re.LitEnd, LitOut: accept}
-		return &nFA{Start: start, Accept: accept}
-	case EmptyString:
-		accept := &nFANode{}
-		start := &nFANode{Epsilons: []*nFANode{accept}}
-		return &nFA{Start: start, Accept: accept}
-	case NoMatch:
-		return &nFA{Start: &nFANode{}}
-	}
-	return nil
 }
 
 // Convert a simplified golang syntax.Regexp into a more general regular expression.
@@ -313,6 +147,89 @@ func normalizeRegexp(re *syntax.Regexp) *regexp {
 	panic(fmt.Sprintf("Unknown regexp operation: %v (%v)", re.Op, re))
 }
 
+// Our NFAs always have exactly one accept state.
+type nFA struct {
+	Start  *nFANode
+	Accept *nFANode
+}
+
+// Visit the node, return true if the node has already been visited this
+// epoch and false otherwise.
+func seen(node *nFANode, epoch int) bool {
+	if node.WhenSeen == epoch {
+		return true
+	}
+	node.WhenSeen = epoch
+	return false
+}
+
+// An nFANode has zero or more epsilon-transitions but only at most one
+// character class transition ([LitBegin-LitEnd] -> LitOut). If the node has no
+// character class transition, LitOut is nil. EpsilonClosure is populated by
+// calling populateEpsilonClosure and Trigrams is populated by calling
+// populateTrigrams. WhenSeen is the last epoch this node was visited and
+// Capacity is used by findCut (and populated in that method by calling
+// populateCapacities).
+type nFANode struct {
+	LitOut         *nFANode
+	LitBegin       rune
+	LitEnd         rune
+	Epsilons       []*nFANode
+	EpsilonClosure []*nFANode
+	Trigrams       []string
+	WhenSeen       int
+	Capacity       int
+}
+
+// Thompson's construction of an NFA from a regular expression.
+func buildNFA(re *regexp) *nFA {
+	switch re.Op {
+	case KleeneStar:
+		sub := buildNFA(re.Sub[0])
+		accept := &nFANode{}
+		start := &nFANode{Epsilons: []*nFANode{sub.Start, accept}}
+		sub.Accept.Epsilons = append(sub.Accept.Epsilons, sub.Start, accept)
+		return &nFA{Start: start, Accept: accept}
+	case Concatenate:
+		var next, curr *nFA
+		var accept *nFANode
+		for i := len(re.Sub) - 1; i >= 0; i-- {
+			curr = buildNFA(re.Sub[i])
+			if next != nil {
+				curr.Accept.Epsilons = append(curr.Accept.Epsilons, next.Start)
+			} else {
+				accept = curr.Accept
+			}
+			next = curr
+		}
+		return &nFA{Start: curr.Start, Accept: accept}
+	case Alternate:
+		subStarts := make([]*nFANode, len(re.Sub))
+		accept := &nFANode{}
+		for i, sub := range re.Sub {
+			nfa := buildNFA(sub)
+			nfa.Accept.Epsilons = append(nfa.Accept.Epsilons, accept)
+			subStarts[i] = nfa.Start
+		}
+		start := &nFANode{Epsilons: subStarts}
+		return &nFA{Start: start, Accept: accept}
+	case Literal:
+		accept := &nFANode{}
+		start := &nFANode{LitBegin: re.LitBegin, LitEnd: re.LitEnd, LitOut: accept}
+		return &nFA{Start: start, Accept: accept}
+	case EmptyString:
+		accept := &nFANode{}
+		start := &nFANode{Epsilons: []*nFANode{accept}}
+		return &nFA{Start: start, Accept: accept}
+	case NoMatch:
+		return &nFA{Start: &nFANode{}}
+	}
+	panic(fmt.Sprintf("Unknown regexp Op: %s (%v)", re.Op, re))
+}
+
+// A trigram query. These are always in conjunctive normal form: an AND of a
+// bunch of ORs. The Query [["abc", "xbc"], ["xxx"]], for example, represents
+// the trigram query (abc OR abc) AND (xxx).
 type Query [][]string
 
 func (q Query) String() string {
@@ -341,6 +258,111 @@ func MakeQuery(r string) (Query, error) {
 	populateEpsilonClosure(nfa)
 	populateTrigrams(nfa)
 	return makeQueryHelper(nfa), nil
+}
+
+// Compute the epsilon closure of each node in the NFA, populate the
+// EpsilonClosure field of each node with that value. The epsilon closure of
+// a node is the set of all nodes that can be reached via zero or more epsilon
+// transitions.
+func populateEpsilonClosure(nfa *nFA) {
+	populateEpsilonClosureHelper(nfa.Start, newEpoch())
+}
+
+func populateEpsilonClosureHelper(node *nFANode, epoch int) {
+	if seen(node, epoch) {
+		return
+	}
+	closure := []*nFANode{node}
+	for _, e := range node.Epsilons {
+		populateEpsilonClosureHelper(e, epoch)
+		closure = append(closure, e.EpsilonClosure...)
+	}
+	node.EpsilonClosure = uniqNodes(closure)
+	if node.LitOut != nil {
+		populateEpsilonClosureHelper(node.LitOut, epoch)
+	}
+}
+
+type byNFANodePtr []*nFANode
+func (a byNFANodePtr) Len() int      { return len(a) }
+func (a byNFANodePtr) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a byNFANodePtr) Less(i, j int) bool {
+	return uintptr(unsafe.Pointer(a[i])) < uintptr(unsafe.Pointer(a[j]))
+}
+
+func uniqNodes(nodes []*nFANode) []*nFANode {
+	sort.Sort(byNFANodePtr(nodes))
+	i := 0
+	for _, s := range nodes {
+		if i == 0 || nodes[i-1] != s {
+			nodes[i] = s
+			i++
+		}
+	}
+	return nodes[:i]
+}
+
+func trigrams(root *nFANode, accept *nFANode) []string {
+	return uniq(ngramSearch(root, accept, 3))
+}
+
+func ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
+	if limit == 0 {
+		return []string{""}
+	}
+	results := []string{}
+	for _, cnode := range node.EpsilonClosure {
+		if cnode == accept {
+			// Bail out, we can reach the accept state before we've consumed
+			// enough characters for a full n-gram.
+			return []string{}
+		}
+		if cnode.LitOut == nil {
+			continue
+		}
+		begin := int(cnode.LitBegin)
+		end := int(cnode.LitEnd)
+		if end-begin > MaxCharClassSize {
+			// Bail out, the ngram set might be too large.
+			return []string{}
+		}
+		subresults := ngramSearch(cnode.LitOut, accept, limit-1)
+		if len(subresults) == 0 {
+			// A subresult has bailed out, so short-circuit here as well.
+			return []string{}
+		}
+		if len(subresults)*(end-begin+1) > MaxNgramSetSize {
+			// Bail out, the ngram set is going to be too large.
+			return []string{}
+		}
+		suffixes := make([]string, len(subresults))
+		for i := begin; i <= end; i++ {
+			copy(suffixes, subresults)
+			crossProduct(i, suffixes)
+			results = append(results, suffixes...)
+		}
+	}
+	return results
+}
+
+// Prefix each string in y with the string at codepoint x.
+func crossProduct(x int, y []string) {
+	s := string(rune(x))
+	for i, yy := range y {
+		y[i] = s + yy
+	}
+}
+
+func uniq(x []string) []string {
+	sort.Strings(x)
+	i := 0
+	for _, s := range x {
+		if i == 0 || x[i-1] != s {
+			x[i] = s
+			i++
+		}
+	}
+	return x[:i]
 }
 
 func countReachableNodes(nfa *nFA) int {

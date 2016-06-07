@@ -20,19 +20,34 @@ import (
 	"unsafe"
 )
 
-// If we see a single character class with at least this many characters, we'll
-// give up on trying to expand ngrams for character class.
-const maxCharClassSize = 10
+// Only use this if you want to tune config values in query processing like how
+// large a trigram set to consider, how large an NFA to consider, etc. If you
+// use MakeQuery instead of creating an engine e and running e.MakeQuery, it'll
+// populate all these config values with some reasonable starting points.
+type Engine struct {
+	// If we see a single character class with at least this many characters, we'll
+	// give up on trying to expand ngrams for character class.
+	maxCharClassSize int
 
-// We'll never analyze a set of ngrams larger than this.
-const maxNgramSetSize = 100
+	// We'll never analyze a set of trigrams larger than this.
+	maxTrigramSetSize int
 
-// We won't try to create a query from any NFAs with at least this many nodes.
-const maxNFANodes = 10000
+	// We won't try to create a query from any NFAs with at least this many nodes.
+	maxNFANodes int
 
-// A very large weight. Used during computation of a minimum-weight cut on the
-// NFA for any node that we don't want to be part of a cut.
-const infinity = maxNgramSetSize * maxNFANodes
+	// A very large weight. Used during computation of a minimum-weight cut on the
+	// NFA for any node that we don't want to be part of a cut.
+	infinity int
+}
+
+func NewEngine(maxCharClassSize int, maxTrigramSetSize int, maxNFANodes int) Engine {
+	return Engine{
+		maxCharClassSize: maxCharClassSize,
+		maxTrigramSetSize: maxTrigramSetSize,
+		maxNFANodes: maxNFANodes,
+		infinity: maxTrigramSetSize * maxNFANodes,
+	}
+}
 
 // Analyzing a single query involves multiple traversals over the NFA. Each
 // traversal needs to keep track of which nodes have and haven't been seen at
@@ -253,18 +268,23 @@ func (q Query) String() string {
 }
 
 // Make a regrams.Query from a string representation of a regexp.
-func MakeQuery(r string) (Query, error) {
+func (e Engine) MakeQuery(r string) (Query, error) {
 	re, err := parseRegexpString(r)
 	if err != nil {
 		return Query{}, err
 	}
 	nfa := buildNFA(re)
-	if countReachableNodes(nfa) > maxNFANodes {
+	if countReachableNodes(nfa) > e.maxNFANodes {
 		return Query{}, errors.New("Too many nodes in NFA, refusing to build query.")
 	}
 	populateEpsilonClosure(nfa)
-	populateTrigrams(nfa)
-	return makeQueryHelper(nfa), nil
+	e.populateTrigrams(nfa)
+	return e.makeQueryHelper(nfa), nil
+}
+
+func MakeQuery(r string) (Query, error) {
+	e := NewEngine(10, 100, 1000)
+	return e.MakeQuery(r)
 }
 
 // Count the number of nodes in an NFA. We only do this to make sure that we
@@ -337,29 +357,29 @@ func uniqNodes(nodes []*nFANode) []*nFANode {
 // at each node (the call to "trigrams" in populateTrigramsHelper), when we
 // could be computing the trigram set with three passes over the graph,
 // accumulating intermediate suffixes to build up the trigrams at each step.
-func populateTrigrams(nfa *nFA) {
-	populateTrigramsHelper(nfa.Start, nfa.Accept, newEpoch())
+func (e Engine) populateTrigrams(nfa *nFA) {
+	e.populateTrigramsHelper(nfa.Start, nfa.Accept, newEpoch())
 }
 
-func populateTrigramsHelper(node *nFANode, accept *nFANode, epoch int) {
+func (e Engine) populateTrigramsHelper(node *nFANode, accept *nFANode, epoch int) {
 	if seen(node, epoch) {
 		return
 	}
 	if node.LitOut != nil {
-		node.Trigrams = trigrams(node, accept)
-		populateTrigramsHelper(node.LitOut, accept, epoch)
+		node.Trigrams = e.trigrams(node, accept)
+		e.populateTrigramsHelper(node.LitOut, accept, epoch)
 	}
-	for _, e := range node.Epsilons {
-		populateTrigramsHelper(e, accept, epoch)
+	for _, eps := range node.Epsilons {
+		e.populateTrigramsHelper(eps, accept, epoch)
 	}
 }
 
 // Compute the trigram set for an individual node.
-func trigrams(root *nFANode, accept *nFANode) []string {
-	return uniq(ngramSearch(root, accept, 3))
+func (e Engine) trigrams(root *nFANode, accept *nFANode) []string {
+	return uniq(e.ngramSearch(root, accept, 3))
 }
 
-func ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
+func (e Engine) ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
 	if limit == 0 {
 		return []string{""}
 	}
@@ -375,16 +395,16 @@ func ngramSearch(node *nFANode, accept *nFANode, limit int) []string {
 		}
 		begin := int(cnode.LitBegin)
 		end := int(cnode.LitEnd)
-		if end-begin > maxCharClassSize {
+		if end-begin+1 > e.maxCharClassSize {
 			// Bail out, the ngram set might be too large.
 			return []string{}
 		}
-		subresults := ngramSearch(cnode.LitOut, accept, limit-1)
+		subresults := e.ngramSearch(cnode.LitOut, accept, limit-1)
 		if len(subresults) == 0 {
 			// A subresult has bailed out, so short-circuit here as well.
 			return []string{}
 		}
-		if len(subresults)*(end-begin+1) > maxNgramSetSize {
+		if len(subresults)*(end-begin+1) > e.maxTrigramSetSize {
 			// Bail out, the ngram set is going to be too large.
 			return []string{}
 		}
@@ -411,11 +431,11 @@ func crossProduct(x int, y []string) {
 // weights computed from the size of the trigram sets of each node, then
 // recursively continue on both sides of the cut to identify disjunctions that
 // we can AND together to make a complete query.
-func makeQueryHelper(nfa *nFA) Query {
-	s, t, cut := findCut(nfa)
+func (e Engine) makeQueryHelper(nfa *nFA) Query {
+	s, t, cut := e.findCut(nfa)
 	if len(cut) > 0 {
-		sq := makeQueryHelper(s)
-		tq := makeQueryHelper(t)
+		sq := e.makeQueryHelper(s)
+		tq := e.makeQueryHelper(t)
 		return Query(append(append(sq, uniq(cut)), tq...))
 	} else {
 		return Query{}
@@ -440,10 +460,10 @@ func uniq(x []string) []string {
 // can be pushed through, identify the cut and do a little surgery on the NFA
 // so that it's actually two NFAs: one on each side of the cut. We'll pass those
 // two NFAs back along with the cut and continue extracting queries from each.
-func findCut(nfa *nFA) (*nFA, *nFA, []string) {
-	populateCapacities(nfa)
+func (e Engine) findCut(nfa *nFA) (*nFA, *nFA, []string) {
+	e.populateCapacities(nfa)
 	for path := []*nFANode{}; path != nil; path = findAugmentingPath(nfa) {
-		minCap := infinity
+		minCap := e.infinity
 		for _, node := range path {
 			if node.Capacity < minCap {
 				minCap = node.Capacity
@@ -536,14 +556,14 @@ func findAugmentingPathHelper(node *nFANode, accept *nFANode, epoch int) []*nFAN
 }
 
 // Calculate capacities for all nodes in the NFA.
-func populateCapacities(nfa *nFA) {
-	populateCapacitiesHelper(nfa.Start, newEpoch())
+func (e Engine) populateCapacities(nfa *nFA) {
+	e.populateCapacitiesHelper(nfa.Start, newEpoch())
 }
 
 // * Any node with LitOut = nil has capacity infinity.
 // * Any node with LitOut != nil && empty trigram set has capacity infinity.
 // * Any node with LitOut != nil && non-empty trigram set has capacity == len(trigram set).
-func populateCapacitiesHelper(node *nFANode, epoch int) {
+func (e Engine) populateCapacitiesHelper(node *nFANode, epoch int) {
 	if seen(node, epoch) {
 		return
 	}
@@ -552,13 +572,13 @@ func populateCapacitiesHelper(node *nFANode, epoch int) {
 		if nt > 0 {
 			node.Capacity = nt
 		} else {
-			node.Capacity = infinity
+			node.Capacity = e.infinity
 		}
-		populateCapacitiesHelper(node.LitOut, epoch)
+		e.populateCapacitiesHelper(node.LitOut, epoch)
 	} else {
-		node.Capacity = infinity
+		node.Capacity = e.infinity
 	}
-	for _, e := range node.Epsilons {
-		populateCapacitiesHelper(e, epoch)
+	for _, eps := range node.Epsilons {
+		e.populateCapacitiesHelper(eps, epoch)
 	}
 }

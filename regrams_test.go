@@ -117,7 +117,8 @@ func TestTrigrams1(t *testing.T) {
 	}
 	nfa := buildNFA(r)
 	populateEpsilonClosure(nfa)
-	trigrams := trigrams(nfa.Start, nfa.Accept)
+	e := NewEngine(10, 100, 1000)
+	trigrams := e.trigrams(nfa.Start, nfa.Accept)
 	want := "[abv abw abx aby abz bbv bbw bbx bby bbz cbv cbw cbx cby cbz]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -132,7 +133,8 @@ func TestTrigrams2(t *testing.T) {
 	}
 	nfa := buildNFA(r)
 	populateEpsilonClosure(nfa)
-	trigrams := trigrams(nfa.Start, nfa.Accept)
+	e := NewEngine(10, 100, 1000)
+	trigrams := e.trigrams(nfa.Start, nfa.Accept)
 	want := "[abc acc adc aec afc xyz]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -147,7 +149,8 @@ func TestTrigrams3(t *testing.T) {
 	}
 	nfa := buildNFA(r)
 	populateEpsilonClosure(nfa)
-	trigrams := trigrams(nfa.Start, nfa.Accept)
+	e := NewEngine(10, 100, 1000)
+	trigrams := e.trigrams(nfa.Start, nfa.Accept)
 	want := "[aaa aab aba abb baa bab bba bbb]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)
@@ -162,7 +165,8 @@ func TestTrigrams4(t *testing.T) {
 	}
 	nfa := buildNFA(r)
 	populateEpsilonClosure(nfa)
-	trigrams := trigrams(nfa.Start, nfa.Accept)
+	e := NewEngine(10, 100, 1000)
+	trigrams := e.trigrams(nfa.Start, nfa.Accept)
 	want := "[]"
 	if fmt.Sprintf("%v", trigrams) != fmt.Sprintf("%v", want) {
 		t.Errorf("Got %v, want %v", trigrams, want)

@@ -179,20 +179,20 @@ var queryExamples = []struct {
 }{
 	{`[a-ce-z]`, ``},
 	{`[^t]abc[59][^5](xxx|yyy)z`, `(abc) (bc5|bc9) (xxx|yyy) (xxz|yyz)`},
-	{`[a-c][0-3]zz`, `(a0z|a1z|a2z|a3z|b0z|b1z|b2z|b3z|c0z|c1z|c2z|c3z) (0zz|1zz|2zz|3zz)`},
+	{`[a-c][0-3]zz`, `(0zz|1zz|2zz|3zz) (a0z|a1z|a2z|a3z|b0z|b1z|b2z|b3z|c0z|c1z|c2z|c3z)`},
 	{`[a-z]ab[a-z]def[a-z]gh[a-z]`, `(def)`},
 
 	// Examples from codesearch tests
 	{`Abcdef`, `(Abc) (bcd) (cde) (def)`},
 	{`(abc)(def)`, `(abc) (bcd) (cde) (def)`},
 	{`abc.*(def|ghi)`, `(abc) (def|ghi)`},
-	// Note: codesearch parses the next query into "abc (bcd cde def)|(bcg cgh ghi)", but
-	// we don't attempt any such simplifications.
+	// Note: codesearch parses the next query into "abc (bcd cde def)|(bcg cgh ghi)",
+	// but we don't attempt any such distributive simplifications.
 	{`abc(def|ghi)`, `(abc) (bcd|bcg) (cde|cgh) (def|ghi)`},
 	// Note: codesearch parses the next two queries as "ahe ell hel llo" and
 	// "(ahe ell hel llo)|(bwo orl rld wor)", respectively.
-	{`a+hello`, `(aaa|aah|ahe) (hel) (ell) (llo)`},
-	{`(a+hello|b+world)`, `(aaa|aah|ahe|bbb|bbw|bwo) (hel|wor) (ell|orl) (llo|rld)`},
+	{`a+hello`, `(aaa|aah|ahe) (ell) (hel) (llo)`},
+	{`(a+hello|b+world)`, `(aaa|aah|ahe|bbb|bbw|bwo) (ell|orl) (hel|wor) (llo|rld)`},
 	{`a*bbb`, `(bbb)`},
 	{`a?bb`, ``},
 	// Note: codesearch only parses the next query into "bbb".
@@ -214,13 +214,18 @@ var queryExamples = []struct {
 	// figure out a trigram query, we return the empty query.
 	{`[^\s\S]`, ``},
 
+	// Simplifications.
+	{`(ab){20}`, `(aba) (bab)`},
+	{`(a|b){20}`, `(aaa|aab|aba|abb|baa|bab|bba|bbb)`},
+	{`(ab|xy){20}`, `(aba|abx|xya|xyx) (bab|bxy|yab|yxy)`},
+
 	// Interesting Factoring examples.
 	{`(abc|abc)`, `(abc)`},
 	{`(ab|ab)c`, `(abc)`},
 	{`ab(cab|cat)`, `(abc) (bca) (cab|cat)`},
 	// codesearch returns (abc|def) for the query below.
 	{`(z*(abc|def)z*)(z*(abc|def)z*)`,
-		`(abc|def) (bca|bcd|bcz|efa|efd|efz) (cab|cde|cza|czd|czz|fab|fde|fza|fzd|fzz) (abc|def)`},
+		`(abc|def) (bca|bcd|bcz|efa|efd|efz) (cab|cde|cza|czd|czz|fab|fde|fza|fzd|fzz)`},
 	{`(z*abcz*defz*)|(z*abcz*defz*)`,
 		`(abc) (bcd|bcz) (cde|czd|czz) (def)`},
 	// codesearch returns (abc) (def) (ghi|jkl|mno|prs) for the query below.
@@ -270,14 +275,14 @@ var queryExamples = []struct {
 	{`a+b+c+`, `(aaa|aab|abb|abc)`},
 
 	// Our "trigrams" are three runes.
-	{`プログラミング`, `(プログ) (ログラ) (グラミ) (ラミン) (ミング)`},
+	{`プログラミング`, `(グラミ) (プログ) (ミング) (ラミン) (ログラ)`},
 	{`(?i)Füße`, `(FÜß|FÜẞ|Füß|Füẞ|fÜß|fÜẞ|füß|füẞ) (ÜßE|Üße|ÜẞE|Üẞe|üßE|üße|üẞE|üẞe)`},
 }
 
 func TestQueries(t *testing.T) {
 	for _, ex := range queryExamples {
 		query, err := MakeQuery(ex.r)
-		if err != nil {
+		if err != nil && ex.q != "" {
 			t.Fatalf("Error creating query: %v", err)
 		}
 		if query.String() != ex.q {

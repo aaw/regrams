@@ -25,18 +25,18 @@ import (
 // use MakeQuery instead of creating an engine e and running e.MakeQuery, it'll
 // populate all these config values with some reasonable starting points.
 type Engine struct {
-	// If we see a single character class with at least this many characters, we'll
-	// give up on trying to expand ngrams for character class.
+	// If we see a single character class with at least this many
+	// characters, we'll give up trying to expand trigrams for that class.
 	maxCharClassSize int
 
 	// We'll never analyze a set of trigrams larger than this.
 	maxTrigramSetSize int
 
-	// We won't try to create a query from any NFAs with at least this many nodes.
+	// We won't try to create a query from any NFAs bigger than this.
 	maxNFANodes int
 
-	// A very large weight. Used during computation of a minimum-weight cut on the
-	// NFA for any node that we don't want to be part of a cut.
+	// A very large weight. Used during computation of a minimum-weight
+	// cut on the NFA for any node that we don't want to be part of a cut.
 	infinity int
 }
 
@@ -55,8 +55,8 @@ func NewEngine(maxCharClassSize int, maxTrigramSetSize int, maxNFANodes int) Eng
 // to keep track of this for each traversal, each nFANode has a WhenSeen field
 // and each time we want to traverse the NFA, we'll increment a global Epoch
 // counter. When we visit an nFANode, we'll set WhenSeen to the current epoch,
-// so testing whether a node has been visited for a traversal is just a check to
-// see if WhenSeen is equal to the current epoch.
+// so testing whether a node has been visited for a traversal is just a check
+// to see if WhenSeen is equal to the current epoch.
 var epoch = 0
 
 func newEpoch() int {
@@ -95,8 +95,9 @@ func parseRegexpString(expr string) (*regexp, error) {
 	return normalizeRegexp(sre), nil
 }
 
-// Convert a simplified golang syntax.Regexp into a more general regular expression.
-// The normalized regular expression may match more than the syntax.Regexp would.
+// Convert a simplified golang syntax.Regexp into a more general regular
+// expression. The normalized regular expression may match more than the
+// syntax.Regexp would.
 func normalizeRegexp(re *syntax.Regexp) *regexp {
 	switch re.Op {
 	case syntax.OpNoMatch:
@@ -274,12 +275,20 @@ func (e Engine) MakeQuery(r string) (Query, error) {
 		return Query{}, err
 	}
 	nfa := buildNFA(re)
-	if countReachableNodes(nfa) > e.maxNFANodes {
-		return Query{}, errors.New("Too many nodes in NFA, refusing to build query.")
+	n := countReachableNodes(nfa)
+	if n > e.maxNFANodes {
+		es := fmt.Sprintf("Too many nodes in NFA (%v > maxNFANodes = %v), refusing to build query.", n, e.maxNFANodes)
+		return Query{}, errors.New(es)
 	}
 	populateEpsilonClosure(nfa)
 	e.populateTrigrams(nfa)
-	return e.makeQueryHelper(nfa), nil
+	q := e.makeQueryHelper(nfa)
+	s := simplify(q)
+	if len(s) == 0 {
+		return Query{}, errors.New("Couldn't generate a query")
+	} else {
+		return s, nil
+	}
 }
 
 func MakeQuery(r string) (Query, error) {
@@ -386,8 +395,8 @@ func (e Engine) ngramSearch(node *nFANode, accept *nFANode, limit int) []string 
 	results := []string{}
 	for _, cnode := range node.EpsilonClosure {
 		if cnode == accept {
-			// Bail out, we can reach the accept state before we've consumed
-			// enough characters for a full n-gram.
+			// Bail out, we can reach the accept state before we've
+			// consumed enough characters for a full n-gram.
 			return []string{}
 		}
 		if cnode.LitOut == nil {
@@ -401,7 +410,7 @@ func (e Engine) ngramSearch(node *nFANode, accept *nFANode, limit int) []string 
 		}
 		subresults := e.ngramSearch(cnode.LitOut, accept, limit-1)
 		if len(subresults) == 0 {
-			// A subresult has bailed out, so short-circuit here as well.
+			// A subresult has bailed out. short-circuit here too.
 			return []string{}
 		}
 		if len(subresults)*(end-begin+1) > e.maxTrigramSetSize {
@@ -454,12 +463,61 @@ func uniq(x []string) []string {
 	return x[:i]
 }
 
+type byStringSlice [][]string
+func (a byStringSlice) Len() int      { return len(a) }
+func (a byStringSlice) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a byStringSlice) Less(i, j int) bool {
+	min := len(a[i])
+	if len(a[j]) < min {
+		min = len(a[j])
+	}
+	for k := 0; k < min; k++ {
+		cmp := strings.Compare(a[i][k], a[j][k])
+		if cmp != 0 {
+			return cmp == -1
+		}
+	}
+	if len(a[i]) != len(a[j]) {
+		return len(a[i]) < len(a[i])
+	}
+	return false
+}
+
+// Simplify a Query. For now, all we do is remove any repeated disjunctions,
+// which can show up when processing something like (ab){20}, which expands
+// into something like "(aba) (bab) (aba) (bab) ...". Each disjunction is
+// already internally sorted since it's passed through uniq, so we just
+// need to sort an deduplicate the sorted slices of strings.
+func simplify(q Query) Query {
+	sort.Sort(byStringSlice(q))
+	i := 0
+	for _, s := range q {
+		if i == 0 {
+			i++
+			continue
+		}
+		eq := len(s) == len(q[i-1])
+		if eq {
+			for j := 0; j < len(s); j++ {
+				if s[j] != q[i-1][j] {
+					q[i] = s
+					i++
+				}
+			}
+		} else {
+			q[i] = s
+			i++
+		}
+	}
+	return q[:i]
+}
+
 // Find a minimum-weight vertex cut in the NFA by repeatedly pushing flow
 // through a path of positive capacity until no such path exists. This is
 // essentially the (depth-first) Ford-Fulkerson algorithm. After no more flow
 // can be pushed through, identify the cut and do a little surgery on the NFA
-// so that it's actually two NFAs: one on each side of the cut. We'll pass those
-// two NFAs back along with the cut and continue extracting queries from each.
+// so that it's actually two NFAs: one on each side of the cut. We'll pass
+// both NFAs back along with the cut and continue extracting queries from each.
 func (e Engine) findCut(nfa *nFA) (*nFA, *nFA, []string) {
 	e.populateCapacities(nfa)
 	for path := []*nFANode{}; path != nil; path = findAugmentingPath(nfa) {
@@ -562,7 +620,8 @@ func (e Engine) populateCapacities(nfa *nFA) {
 
 // * Any node with LitOut = nil has capacity infinity.
 // * Any node with LitOut != nil && empty trigram set has capacity infinity.
-// * Any node with LitOut != nil && non-empty trigram set has capacity == len(trigram set).
+// * Any node with LitOut != nil && non-empty trigram set has capacity
+//   len(trigram set).
 func (e Engine) populateCapacitiesHelper(node *nFANode, epoch int) {
 	if seen(node, epoch) {
 		return

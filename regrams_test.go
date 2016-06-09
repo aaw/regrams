@@ -195,8 +195,8 @@ var queryExamples = []struct {
 	{`(a+hello|b+world)`, `(aaa|aah|ahe|bbb|bbw|bwo) (ell|orl) (hel|wor) (llo|rld)`},
 	{`a*bbb`, `(bbb)`},
 	{`a?bb`, ``},
-	// Note: codesearch only parses the next query into "bbb".
-	{`a?bbb`, `(abb|bbb)`},
+	{`a?bbb`, `(bbb)`},
+	{`a+bbb`, `(aaa|aab|abb) (bbb)`},
 	{`(bbb)a?`, `(bbb)`},
 	{`(bbb)a*`, `(bbb)`},
 	{`^abc`, `(abc)`},
@@ -210,8 +210,8 @@ var queryExamples = []struct {
 	{`.`, ``},
 	{`()`, ``},
 	{`(?s).`, ``},
-	// Query below has no match, but we don't distinguish all/no matches. If we can't
-	// figure out a trigram query, we return the empty query.
+	// Query below has no match, but we don't distinguish all/no matches. If we
+	// can't figure out a trigram query, we return the empty query.
 	{`[^\s\S]`, ``},
 
 	// Simplifications.
@@ -273,6 +273,18 @@ var queryExamples = []struct {
 	{`ab(cd)*ef`, `(abc|abe) (bcd|bef)`},
 	{`ab*cd`, `(abb|abc|acd)`},
 	{`a+b+c+`, `(aaa|aab|abb|abc)`},
+
+	// A few alternations that exercise correct computation of residuals
+	// while augmenting paths for max flow.
+	{`(ab|cd)efg`, `(abe|cde) (bef|def) (efg)`},
+	{`ab(cd|fg|ij)lm(n|o)p(q|r|s|t)uvw`,
+		"(abc|abf|abi) (bcd|bfg|bij) (cdl|fgl|ijl) (dlm|glm|jlm) (lmn|lmo) " +
+		"(mnp|mop) (npq|npr|nps|npt|opq|opr|ops|opt) (pqu|pru|psu|ptu) " +
+		"(quv|ruv|suv|tuv) (uvw)" },
+	{`ab(cd(eeee|ffff|gggg|hhhh)ij)+kl`,
+	        "(abc) (bcd) (cde|cdf|cdg|cdh) (dee|dff|dgg|dhh) (eee|fff|ggg|hhh) " +
+		"(eei|ffi|ggi|hhi) (eij|fij|gij|hij) (ijc|ijk) (jcd|jkl)" },
+	{`a(bc(de(fg|hi)|(jk|lm))|op)qr`, `(abc|aop) (bcd|bcj|bcl|opq) (cde|cjk|clm|pqr)`},
 
 	// Our "trigrams" are three runes.
 	{`プログラミング`, `(グラミ) (プログ) (ミング) (ラミン) (ログラ)`},

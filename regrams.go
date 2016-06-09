@@ -192,7 +192,7 @@ func seen(node *nFANode, epoch int) bool {
 // calling populateEpsilonClosure and Trigrams is populated by calling
 // populateTrigrams. WhenSeen is the last epoch this node was visited and
 // Capacity is used by findCut (and populated in that method by calling
-// populateCapacities).
+// populateCapacities). ResidualEdges is used only during min cut isolation.
 type nFANode struct {
 	LitOut         *nFANode
 	LitBegin       rune
@@ -202,6 +202,7 @@ type nFANode struct {
 	Trigrams       []string
 	WhenSeen       int
 	Capacity       int
+	ResidualEdges  []*nFANode
 }
 
 // Thompson's construction of an NFA from a regular expression.
@@ -527,8 +528,27 @@ func (e Engine) findCut(nfa *nFA) (*nFA, *nFA, []string) {
 				minCap = node.Capacity
 			}
 		}
+		// For every node on the augmenting path, decrement the
+		// capacity by the min capacity on the path and install
+		// back edges to simulate reverse edges in the residual
+		// graph.
+		var prev *nFANode
 		for _, node := range path {
+			if prev != nil {
+				// Install a residual edge if none
+				// exists. findAugmentingPath returns
+				// a path in reverse order.
+				nodePtr := uintptr(unsafe.Pointer(node))
+				i := sort.Search(len(prev.ResidualEdges), func(i int) bool {
+					return uintptr(unsafe.Pointer(prev.ResidualEdges[i])) >= nodePtr
+				})
+				if i >= len(prev.ResidualEdges) || prev.ResidualEdges[i] != node {
+					prev.ResidualEdges = append(prev.ResidualEdges, node)
+					sort.Sort(byNFANodePtr(prev.ResidualEdges))
+				}
+			}
 			node.Capacity -= minCap
+			prev = node
 		}
 	}
 	cut, cutEpoch := isolateCut(nfa)
@@ -561,11 +581,17 @@ func (e Engine) findCut(nfa *nFA) (*nFA, *nFA, []string) {
 }
 
 // Once capacities have been decremented by pushing flow through a graph, we
-// can identify the cut by figuring out which nodes are reachable without
-// crossing any zero-capacity nodes.
+// can identify the cut by figuring out which nodes are reachable on the
+// residual flow graph without crossing any zero-capacity nodes. We run a
+// depth-first search here to identify all reachable zero-capacity nodes, then
+// mark all vertices that are reachable without crossing zero-capacity nodes
+// except via residual edges. The findCut function calling this function then
+// figures out which nodes are in the cut from that information.
 func isolateCut(nfa *nFA) ([]*nFANode, int) {
-	epoch := newEpoch()
-	return isolateCutHelper(nfa.Start, epoch), epoch
+	cut := isolateCutHelper(nfa.Start, newEpoch())
+	residualEpoch := newEpoch()
+	residualTraversal(nfa.Start, false, residualEpoch)
+	return cut, residualEpoch
 }
 
 func isolateCutHelper(node *nFANode, epoch int) []*nFANode {
@@ -583,6 +609,26 @@ func isolateCutHelper(node *nFANode, epoch int) []*nFANode {
 		result = append(result, isolateCutHelper(e, epoch)...)
 	}
 	return result
+}
+
+// Traverse all nodes in the graph, avoiding crossing capacity 0 vertices
+// unless we're moving across edges in the residual graph.
+func residualTraversal(node* nFANode, upstream bool, epoch int) {
+	if seen(node, epoch) {
+		return
+	}
+	if node.Capacity == 0 && !upstream {
+		return
+	}
+	if node.LitOut != nil {
+		residualTraversal(node.LitOut, false, epoch)
+	}
+	for _, e := range node.Epsilons {
+		residualTraversal(e, false, epoch)
+	}
+	for _, r := range node.ResidualEdges {
+		residualTraversal(r, true, epoch)
+	}
 }
 
 // Find a path from nfa.Start to nfa.Accept through vertices of positive

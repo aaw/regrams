@@ -16,7 +16,7 @@ explaining the implementation. Instead of using the structure of the parsed
 regular expression to generate queries, however, regrams creates an NFA from
 the query with nodes weighted by the size of the reachable trigram sets and
 repeatedly extracts disjunctions from the NFA by identifying and removing
-minimum-weight graph cuts. I wrote [this post](http://blog.aaw.io/regular-expression-indexing.html)
+minimum-weight graph cuts. I wrote [a post](http://blog.aaw.io/2016/06/10/regrams-intro.html)
 on regular expression search via graph cuts that gives a lot more detail about
 the technique.
 

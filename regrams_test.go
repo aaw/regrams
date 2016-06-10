@@ -273,6 +273,7 @@ var queryExamples = []struct {
 	{`ab(cd)*ef`, `(abc|abe) (bcd|bef)`},
 	{`ab*cd`, `(abb|abc|acd)`},
 	{`a+b+c+`, `(aaa|aab|abb|abc)`},
+	{`ab(c|(d*))ef`, `(abc|abd|abe) (bce|bdd|bde|bef)`},
 
 	// A few alternations that exercise correct computation of residuals
 	// while augmenting paths for max flow.

@@ -105,8 +105,8 @@ func TestEpsilonClosure(t *testing.T) {
 	n1.Epsilons = append(n1.Epsilons, n8)
 	populateEpsilonClosure(&nFA{Start: n10, Accept: n1})
 	assertNodeSetEqual(t, []*nFANode{n2}, n2.EpsilonClosure)
-	assertNodeSetEqual(t, []*nFANode{n1, n2, n3, n4, n5, n6, n7, n8, n9}, n9.EpsilonClosure)
-	assertNodeSetEqual(t, []*nFANode{n1, n2, n3, n4, n5, n6, n7, n8, n9, n10}, n10.EpsilonClosure)
+	assertNodeSetEqual(t, []*nFANode{n2, n3}, n9.EpsilonClosure)
+	assertNodeSetEqual(t, []*nFANode{n2, n3}, n10.EpsilonClosure)
 }
 
 func TestTrigrams1(t *testing.T) {

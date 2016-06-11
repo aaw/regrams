@@ -329,7 +329,10 @@ func populateEpsilonClosureHelper(node *nFANode, epoch int) {
 	if seen(node, epoch) {
 		return
 	}
-	closure := []*nFANode{node}
+	closure := []*nFANode{}
+	if node.LitOut != nil || node.Epsilons == nil {
+		closure = append(closure, node)
+	}
 	for _, e := range node.Epsilons {
 		populateEpsilonClosureHelper(e, epoch)
 		closure = append(closure, e.EpsilonClosure...)

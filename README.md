@@ -43,6 +43,8 @@ $ ./regrams '(?i)abc'
 
 Running `regrams --help` will give you more options.
 
+Alternatively, you can try out examples in a browser at the [Go Playground](https://play.golang.org/p/YgITTGFw49D).
+
 To use regrams as a package, import `github.com/aaw/regrams`, then call
 `regrams.MakeQuery` in your code to generate a trigram query from a string
 representing a regular expression. `MakeQuery` returns a slice-of-slices of

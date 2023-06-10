@@ -20,28 +20,21 @@ minimum-weight graph cuts. I wrote [a post](http://blog.aaw.io/2016/06/10/regram
 on regular expression search via graph cuts that gives a lot more detail about
 the technique.
 
-The easiest way to try out this package is to build the command-line wrapper
+The easiest way to try out this package is to run the command-line wrapper
 included in this repo:
 
 ```
-go get github.com/aaw/regrams
-go build -o regrams github.com/aaw/regrams/cmd/regrams
-```
-
-Then you can use the command-line tool to start playing around with queries:
-
-```
-$ ./regrams abcd
+$ go run cmd/regrams/main.go abcd
 (abc) (bcd)
-$ ./regrams 'Time: [0-9]+ ms'
+$ go run cmd/regrams/main.go 'Time: [0-9]+ ms'
 ( ms) (: 0|: 1|: 2|: 3|: 4|: 5|: 6|: 7|: 8|: 9) (Tim) (e: ) (ime) (me:)
-$ ./regrams '(abc*)+de'
+$ go run cmd/regrams/main.go '(abc*)+de'
 (aba|abc|abd) (bab|bca|bcc|bcd|bde)
-$ ./regrams '(?i)abc'
+$ go run cmd/regrams/main.go '(?i)abc'
 (ABC|ABc|AbC|Abc|aBC|aBc|abC|abc)
 ```
 
-Running `regrams --help` will give you more options.
+Running `go run cmd/regrams/main.go --help` will give you more options.
 
 Alternatively, you can try out examples in a browser at the [Go Playground](https://play.golang.org/p/YgITTGFw49D).
 
